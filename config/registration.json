@@ -1,0 +1,115 @@
+{
+  "nodeDefinition": [
+    {
+      "nodeType": "NODE_TYPE_PASSIVE_RF",
+      "nodeSubType": [
+        "ESM",
+        "SPECTRE"
+      ]
+    }
+  ],
+  "icdVersion": "BSI Flex 335 v2.0 / NATO STANREC 4869 Ed A V1.0",
+  "name": "SPECTRE-01",
+  "shortName": "SPECTRE",
+  "capabilities": [
+    {
+      "category": "Passive RF",
+      "type": "RF Detection"
+    }
+  ],
+  "statusDefinition": {
+    "statusInterval": {
+      "units": "TIME_UNITS_SECONDS",
+      "value": 5.0
+    },
+    "locationDefinition": {
+      "locationUnits": "LOCATION_COORDINATE_SYSTEM_LAT_LNG_DEG_M",
+      "locationDatum": "LOCATION_DATUM_WGS84_E"
+    }
+  },
+  "modeDefinition": [
+    {
+      "modeName": "MONITOR",
+      "modeType": "MODE_TYPE_DEFAULT",
+      "modeDescription": "Passive RF monitoring mode",
+      "settleTime": {
+        "units": "TIME_UNITS_MILLISECONDS",
+        "value": 0.0
+      },
+      "scanType": "SCAN_TYPE_FIXED",
+      "trackingType": "TRACKING_TYPE_NONE",
+      "task": {
+        "concurrentTasks": 1,
+        "regionDefinition": {
+          "regionType": [
+            "REGION_TYPE_AREA_OF_INTEREST"
+          ],
+          "regionArea": [
+            {
+              "locationUnits": "LOCATION_COORDINATE_SYSTEM_LAT_LNG_DEG_M",
+              "locationDatum": "LOCATION_DATUM_WGS84_E"
+            }
+          ]
+        }
+      },
+      "detectionDefinition": [
+        {
+          "locationType": {
+            "locationUnits": "LOCATION_COORDINATE_SYSTEM_LAT_LNG_DEG_M",
+            "locationDatum": "LOCATION_DATUM_WGS84_E"
+          },
+          "detectionReport": [
+            {
+              "category": "DETECTION_REPORT_CATEGORY_DETECTION",
+              "type": "Confidence",
+              "units": "0-1"
+            },
+            {
+              "category": "DETECTION_REPORT_CATEGORY_SIGNAL",
+              "type": "Amplitude",
+              "units": "dBm"
+            },
+            {
+              "category": "DETECTION_REPORT_CATEGORY_SIGNAL",
+              "type": "Start Frequency",
+              "units": "Hz"
+            },
+            {
+              "category": "DETECTION_REPORT_CATEGORY_SIGNAL",
+              "type": "Centre Frequency",
+              "units": "Hz"
+            },
+            {
+              "category": "DETECTION_REPORT_CATEGORY_SIGNAL",
+              "type": "Stop Frequency",
+              "units": "Hz"
+            },
+            {
+              "category": "DETECTION_REPORT_CATEGORY_SIGNAL",
+              "type": "Pulse Duration",
+              "units": "s"
+            }
+          ],
+          "detectionClassDefinition": [
+            {
+              "confidenceDefinition": "CONFIDENCE_DEFINITION_SINGLE_CLASS",
+              "classDefinition": [
+                { "type": "RF Emitter - UAV Control Link" },
+                { "type": "RF Emitter - UAV Video Downlink" },
+                { "type": "RF Emitter - Barrage Jammer" },
+                { "type": "RF Emitter - Pulsed Radar" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "configData": [
+    {
+      "manufacturer": "SPECTRE",
+      "model": "SAPIENT Edge Node",
+      "softwareVersion": "0.1.0"
+    }
+  ]
+}

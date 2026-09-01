@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spectre-sapient"
+version = "0.1.0"
+description = "Minimal BSI Flex 335 v2 SAPIENT Edge Node client"
+requires-python = ">=3.11"
+dependencies = [
+  "protobuf>=5.27,<7",
+  "grpcio-tools>=1.64",
+  "PyYAML>=6.0",
+  "ulid-py>=1.1.0",
+]
+
+[project.scripts]
+spectre = "spectre.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

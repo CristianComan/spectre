@@ -1,0 +1,79 @@
+fusion_node:
+  host: "127.0.0.1"
+  port: 5020
+  connect_timeout_s: 5.0
+  reconnect:
+    initial_delay_s: 1.0
+    max_delay_s: 30.0
+
+node:
+  # Must be a stable UUID for the Edge Node.
+  node_id: "0b6279d7-5a3c-4cb8-bf91-28d1e29f174f"
+  registration_file: "config/registration.json"
+
+status:
+  interval_s: 5.0
+  mode: "MONITOR"
+  node_location:
+    latitude: 50.8500
+    longitude: 4.3500
+    altitude: 20.0
+
+# Simulated EW/RF emitter population, for protocol-level testing without
+# real RF hardware. Each emitter independently rolls on/off every
+# interval_s; while active its object_id (ULID) stays stable so it reads as
+# one continuous ESM track. Replace with a real detector source (Phase 2/3
+# of PLAN.md) once RF hardware is integrated.
+ew_detection:
+  enabled: true
+  interval_s: 5.0
+  detection_confidence: 0.90
+
+  # Plain BSI Flex 335 v2 requires object location or range/bearing.
+  # This is synthetic truth for protocol testing only - emitters are
+  # scattered with small jitter around this reference point.
+  location_reference:
+    latitude: 50.8505
+    longitude: 4.3510
+    altitude: 80.0
+
+  emitters:
+    - name: "UAV_CONTROL_LINK"
+      classification: "RF Emitter - UAV Control Link"
+      centre_frequency: 2437000000.0
+      bandwidth: 20000000.0
+      amplitude_mean: -55.0
+      amplitude_jitter: 4.0
+      on_probability: 0.9
+      location_jitter_deg: 0.0006
+
+    - name: "UAV_VIDEO_DOWNLINK"
+      classification: "RF Emitter - UAV Video Downlink"
+      centre_frequency: 5800000000.0
+      bandwidth: 20000000.0
+      amplitude_mean: -60.0
+      amplitude_jitter: 5.0
+      on_probability: 0.7
+      location_jitter_deg: 0.0006
+
+    - name: "GNSS_JAMMER"
+      classification: "RF Emitter - Barrage Jammer"
+      centre_frequency: 1575420000.0
+      bandwidth: 4000000.0
+      amplitude_mean: -40.0
+      amplitude_jitter: 3.0
+      on_probability: 0.15
+      location_jitter_deg: 0.0010
+
+    - name: "RADAR_X_BAND"
+      classification: "RF Emitter - Pulsed Radar"
+      centre_frequency: 9500000000.0
+      bandwidth: 50000000.0
+      amplitude_mean: -50.0
+      amplitude_jitter: 3.0
+      pulse_duration: 0.000001
+      on_probability: 0.3
+      location_jitter_deg: 0.0015
+
+logging:
+  level: "INFO"
