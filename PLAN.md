@@ -178,17 +178,23 @@ against the real local Fusion Node:
   `CONTROL_START` in both cases) — confirms the `receive_loop` ->
   `handle_task` -> `TaskAck` path works end-to-end, not just in the unit
   tests.
-- **Open item**: the `request: "registration"` path (re-sending a full
-  `Registration` mid-connection) was observed to provoke an `Error` from
-  the Fusion Node immediately afterward, though a `RegistrationAck`
-  eventually followed too. The exact `error_message` text wasn't captured
-  before the test session ended (a node_id collision from a second,
-  independently-started `spectre` process confused the log at the time).
-  Re-verify with `logging.level: DEBUG` and a single running instance,
-  capture the `Error.error_message` list, and decide whether spectre
-  should still blindly resend `Registration` mid-session or whether the
-  Fusion Node expects a fresh connection for that case. Mode-change and
-  status-request task handling were not affected by this.
+- **Resolved**: the `Error` seen after `TaskAck` (both the very first live
+  round-trip and the `request: "registration"` path) turned out to be a
+  real bug, now fixed. Captured with `logging.level: DEBUG` and a single
+  instance: `missing mandatory field: destination_id for task_ack`. The
+  `SapientMessage.destination_id` field is optional in the proto schema,
+  but the Fusion Node validator requires it on `task_ack` specifically -
+  same reverse-engineered-quirk pattern as the other CLAUDE.md entries.
+  Fixed by threading the Task's source `node_id` (the enclosing
+  `SapientMessage.node_id`, not a field on `Task` itself) through
+  `receive_loop` -> `handle_task` -> `build_task_ack`, which now requires
+  a `destination_id` argument. Verified clean end-to-end against a real
+  Fusion-Node-issued `request: "registration"` Task after the fix: `TaskAck`
+  -> `Registration` resend -> `RegistrationAck`, no errors. (A follow-up
+  `unexpected message before registration` seen mid-investigation turned
+  out to be a false lead from testing with a locally-fabricated task_id
+  the Fusion Node had never issued, not a real bug - the real
+  Fusion-Node-issued task round-tripped clean.)
 - Confirmed operationally: only run **one** `spectre` process per
   `node_id` at a time — the Fusion Node has no fencing for a duplicate
   connection, so two processes with the same `node_id` repeatedly kick

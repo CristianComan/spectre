@@ -18,6 +18,8 @@ CFG = {
     "status": {"interval_s": 5.0, "mode": "MONITOR"},
 }
 
+FUSION_NODE_ID = "550e8400-e29b-41d4-a716-446655440000"
+
 
 def _make_client():
     client = SapientEdgeClient(CFG)
@@ -46,11 +48,12 @@ def _mode_change_task(mode: str, task_id: str) -> Task:
 def test_mode_change_accepted_updates_mode_and_active_task():
     client, sent = _make_client()
 
-    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1")))
+    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1"), FUSION_NODE_ID))
 
     assert len(sent) == 1
     ack = sent[0].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
+    assert sent[0].destination_id == FUSION_NODE_ID
     assert client.current_mode == "MONITOR"
     assert client.active_task_id == "task-1"
 
@@ -58,7 +61,7 @@ def test_mode_change_accepted_updates_mode_and_active_task():
 def test_mode_change_rejected_for_unregistered_mode():
     client, sent = _make_client()
 
-    asyncio.run(client.handle_task(_mode_change_task("ATTACK", "task-1")))
+    asyncio.run(client.handle_task(_mode_change_task("ATTACK", "task-1"), FUSION_NODE_ID))
 
     ack = sent[0].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_REJECTED
@@ -69,8 +72,8 @@ def test_mode_change_rejected_for_unregistered_mode():
 def test_second_concurrent_mode_change_is_rejected():
     client, sent = _make_client()
 
-    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1")))
-    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-2")))
+    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1"), FUSION_NODE_ID))
+    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-2"), FUSION_NODE_ID))
 
     ack = sent[-1].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_REJECTED
@@ -83,7 +86,7 @@ def test_unsupported_command_is_rejected():
     task = _task(Task.CONTROL_START, "task-1")
     task.command.detection_threshold = Task.DISCRETE_THRESHOLD_LOW
 
-    asyncio.run(client.handle_task(task))
+    asyncio.run(client.handle_task(task, FUSION_NODE_ID))
 
     ack = sent[0].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_REJECTED
@@ -92,9 +95,9 @@ def test_unsupported_command_is_rejected():
 
 def test_stop_clears_active_task_and_reverts_mode():
     client, sent = _make_client()
-    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1")))
+    asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1"), FUSION_NODE_ID))
 
-    asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "task-1")))
+    asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "task-1"), FUSION_NODE_ID))
 
     ack = sent[-1].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
@@ -105,7 +108,7 @@ def test_stop_clears_active_task_and_reverts_mode():
 def test_stop_on_unknown_task_is_rejected():
     client, sent = _make_client()
 
-    asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "no-such-task")))
+    asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "no-such-task"), FUSION_NODE_ID))
 
     ack = sent[-1].task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_REJECTED
@@ -117,7 +120,7 @@ def test_request_status_acks_then_sends_immediate_status_report():
     task = _task(Task.CONTROL_START, "task-1")
     task.command.request = "status"
 
-    asyncio.run(client.handle_task(task))
+    asyncio.run(client.handle_task(task, FUSION_NODE_ID))
 
     assert len(sent) == 2
     ack_msg, status_msg = sent
@@ -131,7 +134,7 @@ def test_request_registration_acks_then_resends_registration():
     task = _task(Task.CONTROL_START, "task-1")
     task.command.request = "registration"
 
-    asyncio.run(client.handle_task(task))
+    asyncio.run(client.handle_task(task, FUSION_NODE_ID))
 
     assert len(sent) == 2
     ack_msg, registration_msg = sent

@@ -78,19 +78,26 @@ class SapientEdgeClient:
                 msg.ParseFromString(payload)
                 self._log_rx(msg, len(payload))
                 if msg.WhichOneof("content") == "task":
-                    await self.handle_task(msg.task)
+                    await self.handle_task(msg.task, msg.node_id)
         except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
             LOG.warning("Fusion Node connection lost: %s", exc)
             conn_lost.set()
 
-    async def _ack_task(self, task_id: str, status: int, reasons: tuple[str, ...] = ()) -> None:
+    async def _ack_task(
+        self, task_id: str, status: int, source_node_id: str, reasons: tuple[str, ...] = ()
+    ) -> None:
         try:
-            await self.send(build_task_ack(self.node_id, task_id, status, reasons))
+            await self.send(build_task_ack(self.node_id, task_id, status, source_node_id, reasons))
         except (ConnectionError, OSError) as exc:
             LOG.warning("Failed to send TaskAck: %s", exc)
 
-    async def handle_task(self, task) -> None:
+    async def handle_task(self, task, source_node_id: str) -> None:
         """Dispatch an incoming Task; always ends in exactly one TaskAck.
+
+        source_node_id is the node_id of whoever sent the Task (the
+        SapientMessage envelope's node_id, not a field on Task itself) - the
+        TaskAck's destination_id must echo it back or the Fusion Node
+        rejects the ack ("missing mandatory field: destination_id").
 
         Scope (see PLAN.md Phase 1): spectre is a fixed, non-pointable EW
         sensor, so only mode_change and request(status|registration) START
@@ -100,53 +107,66 @@ class SapientEdgeClient:
         """
         LOG.info("Task %s control=%s", task.task_id, task.control)
         if task.control == Task.CONTROL_START:
-            await self._handle_task_start(task)
+            await self._handle_task_start(task, source_node_id)
         elif task.control in (Task.CONTROL_STOP, Task.CONTROL_PAUSE):
-            await self._handle_task_stop(task)
+            await self._handle_task_stop(task, source_node_id)
         else:
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_UNSUPPORTED_COMMAND,))
+            await self._ack_task(
+                task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_UNSUPPORTED_COMMAND,)
+            )
 
-    async def _handle_task_start(self, task) -> None:
+    async def _handle_task_start(self, task, source_node_id: str) -> None:
         which = task.command.WhichOneof("command")
         if which == "mode_change":
             mode = task.command.mode_change
             if mode not in self.valid_modes:
-                await self._ack_task(task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_UNSUPPORTED_MODE,))
+                await self._ack_task(
+                    task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_UNSUPPORTED_MODE,)
+                )
                 return
             if self.active_task_id not in (None, task.task_id):
                 await self._ack_task(
-                    task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_CONCURRENT_TASK_LIMIT,)
+                    task.task_id,
+                    TaskAck.TASK_STATUS_REJECTED,
+                    source_node_id,
+                    (TASK_REASON_CONCURRENT_TASK_LIMIT,),
                 )
                 return
             self.current_mode = mode
             self.active_task_id = task.task_id
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED)
+            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
         elif which == "request":
-            await self._handle_task_request(task)
+            await self._handle_task_request(task, source_node_id)
         else:
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_UNSUPPORTED_COMMAND,))
+            await self._ack_task(
+                task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_UNSUPPORTED_COMMAND,)
+            )
 
-    async def _handle_task_request(self, task) -> None:
+    async def _handle_task_request(self, task, source_node_id: str) -> None:
         request = task.command.request.strip().lower()
         if request == "status":
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED)
+            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
             await self.send(build_status(self.node_id, self.cfg, self.current_mode, self.active_task_id))
         elif request == "registration":
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED)
+            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
             await self.send_registration()
         else:
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_UNSUPPORTED_COMMAND,))
+            await self._ack_task(
+                task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_UNSUPPORTED_COMMAND,)
+            )
 
-    async def _handle_task_stop(self, task) -> None:
+    async def _handle_task_stop(self, task, source_node_id: str) -> None:
         # STOP and PAUSE both revert the active mode_change task here; spectre
         # relies on the fusion node to resend the task definition on resume
         # rather than caching a paused definition locally.
         if task.task_id != self.active_task_id:
-            await self._ack_task(task.task_id, TaskAck.TASK_STATUS_REJECTED, (TASK_REASON_RESOURCE_UNAVAILABLE,))
+            await self._ack_task(
+                task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_RESOURCE_UNAVAILABLE,)
+            )
             return
         self.active_task_id = None
         self.current_mode = self.default_mode
-        await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED)
+        await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
 
     async def send_registration(self) -> None:
         reg_path = self.cfg["node"]["registration_file"]
