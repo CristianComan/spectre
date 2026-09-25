@@ -50,7 +50,19 @@
               "locationDatum": "LOCATION_DATUM_WGS84_E"
             }
           ]
-        }
+        },
+        "command": [
+          {
+            "type": "COMMAND_TYPE_REQUEST",
+            "units": "status|registration",
+            "completionTime": { "units": "TIME_UNITS_SECONDS", "value": 1.0 }
+          },
+          {
+            "type": "COMMAND_TYPE_MODE_CHANGE",
+            "units": "registered mode name",
+            "completionTime": { "units": "TIME_UNITS_SECONDS", "value": 5.0 }
+          }
+        ]
       },
       "detectionDefinition": [
         {

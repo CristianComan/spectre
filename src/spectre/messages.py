@@ -9,7 +9,7 @@ from google.protobuf.json_format import ParseDict
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from .ids import new_ulid
-from .proto import SapientMessage, Registration, StatusReport, DetectionReport
+from .proto import SapientMessage, Registration, StatusReport, DetectionReport, TaskAck
 
 if TYPE_CHECKING:
     from .ew import Detection
@@ -36,6 +36,23 @@ def build_registration(node_id: str, registration_file: str | Path) -> SapientMe
     return _wrap(node_id, "registration", body)
 
 
+def load_registered_modes(registration_file: str | Path) -> tuple[set[str], str]:
+    """Return (valid mode names, default mode name) declared in registration.json.
+
+    Used to validate incoming Task mode_change commands and to know which
+    mode to revert to on Task STOP/PAUSE, without re-deriving them from the
+    parsed Registration protobuf.
+    """
+    data = json.loads(Path(registration_file).read_text(encoding="utf-8"))
+    modes = data.get("modeDefinition", [])
+    names = {mode["modeName"] for mode in modes}
+    default = next(
+        (mode["modeName"] for mode in modes if mode.get("modeType") == "MODE_TYPE_DEFAULT"),
+        next(iter(names)),
+    )
+    return names, default
+
+
 def _set_wgs84_location(location_msg, latitude: float, longitude: float, altitude: float) -> None:
     """Populate the BSI Flex 335 v2 Location message using WGS84 lat/lon degrees/metres."""
     # In the v2 schema: x = longitude, y = latitude, z = altitude.
@@ -46,12 +63,19 @@ def _set_wgs84_location(location_msg, latitude: float, longitude: float, altitud
     location_msg.datum = 1              # LOCATION_DATUM_WGS84_E
 
 
-def build_status(node_id: str, cfg: dict) -> SapientMessage:
+def build_status(
+    node_id: str,
+    cfg: dict,
+    mode: str | None = None,
+    active_task_id: str | None = None,
+) -> SapientMessage:
     body = StatusReport()
     body.report_id = new_ulid()
     body.system = StatusReport.SYSTEM_OK
     body.info = StatusReport.INFO_NEW
-    body.mode = cfg["status"]["mode"]
+    body.mode = mode if mode is not None else cfg["status"]["mode"]
+    if active_task_id:
+        body.active_task_id = active_task_id
 
     loc = cfg["status"].get("node_location")
     if loc:
@@ -63,6 +87,19 @@ def build_status(node_id: str, cfg: dict) -> SapientMessage:
         )
 
     return _wrap(node_id, "status_report", body)
+
+
+def build_task_ack(
+    node_id: str,
+    task_id: str,
+    status: int,
+    reasons: tuple[str, ...] = (),
+) -> SapientMessage:
+    body = TaskAck()
+    body.task_id = task_id
+    body.task_status = status
+    body.reason.extend(reasons)
+    return _wrap(node_id, "task_ack", body)
 
 
 def build_ew_detection(node_id: str, detection: "Detection") -> SapientMessage:
