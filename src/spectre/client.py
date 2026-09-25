@@ -14,6 +14,8 @@ from .messages import (
     build_task_ack,
     load_registered_modes,
 )
+from .mode_history import ModeHistory
+from .netmon import NetworkStats
 from .proto import SapientMessage, Task, TaskAck
 
 LOG = logging.getLogger("spectre")
@@ -41,9 +43,13 @@ class SapientEdgeClient:
         self.valid_modes, self.default_mode = load_registered_modes(cfg["node"]["registration_file"])
         self.current_mode = self.default_mode
         self.active_task_id: str | None = None
+        self.active_task_regions: list[dict] = []
+        self.mode_history = ModeHistory()
+        self.net_stats = NetworkStats()
 
     async def connect(self) -> None:
         fn = self.cfg["fusion_node"]
+        self.net_stats.record_connect_attempt()
         LOG.info("Connecting to %s:%s", fn["host"], fn["port"])
         self.reader, self.writer = await asyncio.wait_for(
             asyncio.open_connection(fn["host"], int(fn["port"])),
@@ -55,14 +61,19 @@ class SapientEdgeClient:
         if self.writer is None:
             raise RuntimeError("Not connected")
         payload = msg.SerializeToString()
+        kind = msg.WhichOneof("content")
         self.writer.write(encode_frame(payload))
         await self.writer.drain()
-        LOG.info(
-            "TX %s node_id=%s bytes=%d",
-            msg.WhichOneof("content"),
-            msg.node_id,
-            len(payload),
+        self.net_stats.record_sent(kind, len(payload))
+        LOG.info("TX %s node_id=%s bytes=%d", kind, msg.node_id, len(payload))
+
+    async def send_status(self) -> None:
+        await self.send(
+            build_status(
+                self.node_id, self.cfg, self.current_mode, self.active_task_id, self.mode_history.last
+            )
         )
+        LOG.info("NET STATS: %s", self.net_stats.summary())
 
     @staticmethod
     def _log_rx(msg: SapientMessage, payload_len: int) -> None:
@@ -76,11 +87,13 @@ class SapientEdgeClient:
                 payload = await read_frame(self.reader)
                 msg = SapientMessage()
                 msg.ParseFromString(payload)
+                self.net_stats.record_received(msg.WhichOneof("content"), len(payload))
                 self._log_rx(msg, len(payload))
                 if msg.WhichOneof("content") == "task":
                     await self.handle_task(msg.task, msg.node_id)
         except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
             LOG.warning("Fusion Node connection lost: %s", exc)
+            self.net_stats.record_error(str(exc), receive=True)
             conn_lost.set()
 
     async def _ack_task(
@@ -90,6 +103,22 @@ class SapientEdgeClient:
             await self.send(build_task_ack(self.node_id, task_id, status, source_node_id, reasons))
         except (ConnectionError, OSError) as exc:
             LOG.warning("Failed to send TaskAck: %s", exc)
+            self.net_stats.record_error(str(exc), send=True)
+
+    @staticmethod
+    def _extract_regions(task) -> list[dict]:
+        """Accept-and-store Task.region per PLAN.md's MVP scope: spectre doesn't
+        filter/gate detections by region yet, but records what was declared so
+        it's visible (logs, StatusReport-adjacent state) rather than dropped."""
+        if not task.region:
+            return []
+        regions = [MessageToDict(r, preserving_proto_field_name=True) for r in task.region]
+        LOG.info("Task %s declares %d region(s): %s", task.task_id, len(regions), regions)
+        return regions
+
+    def _record_mode_change(self, previous_mode: str, task_id: str) -> None:
+        transition = self.mode_history.record(previous_mode, self.current_mode, task_id)
+        LOG.info("MODE CHANGE: %s -> %s (task_id=%s)", transition.from_mode, transition.to_mode, task_id)
 
     async def handle_task(self, task, source_node_id: str) -> None:
         """Dispatch an incoming Task; always ends in exactly one TaskAck.
@@ -132,9 +161,13 @@ class SapientEdgeClient:
                     (TASK_REASON_CONCURRENT_TASK_LIMIT,),
                 )
                 return
+            previous_mode = self.current_mode
             self.current_mode = mode
             self.active_task_id = task.task_id
+            self.active_task_regions = self._extract_regions(task)
+            self._record_mode_change(previous_mode, task.task_id)
             await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
+            await self.send_status()
         elif which == "request":
             await self._handle_task_request(task, source_node_id)
         else:
@@ -146,7 +179,7 @@ class SapientEdgeClient:
         request = task.command.request.strip().lower()
         if request == "status":
             await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
-            await self.send(build_status(self.node_id, self.cfg, self.current_mode, self.active_task_id))
+            await self.send_status()
         elif request == "registration":
             await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
             await self.send_registration()
@@ -164,9 +197,13 @@ class SapientEdgeClient:
                 task.task_id, TaskAck.TASK_STATUS_REJECTED, source_node_id, (TASK_REASON_RESOURCE_UNAVAILABLE,)
             )
             return
+        previous_mode = self.current_mode
         self.active_task_id = None
+        self.active_task_regions = []
         self.current_mode = self.default_mode
+        self._record_mode_change(previous_mode, task.task_id)
         await self._ack_task(task.task_id, TaskAck.TASK_STATUS_ACCEPTED, source_node_id)
+        await self.send_status()
 
     async def send_registration(self) -> None:
         reg_path = self.cfg["node"]["registration_file"]
@@ -206,9 +243,10 @@ class SapientEdgeClient:
         interval = float(self.cfg["status"]["interval_s"])
         while not conn_lost.is_set():
             try:
-                await self.send(build_status(self.node_id, self.cfg, self.current_mode, self.active_task_id))
+                await self.send_status()
             except (ConnectionError, OSError) as exc:
                 LOG.warning("Failed to send status report: %s", exc)
+                self.net_stats.record_error(str(exc), send=True)
                 conn_lost.set()
                 break
             try:
@@ -229,6 +267,7 @@ class SapientEdgeClient:
                         await self.send(build_ew_detection(self.node_id, detection))
                     except (ConnectionError, OSError) as exc:
                         LOG.warning("Failed to send detection report: %s", exc)
+                        self.net_stats.record_error(str(exc), send=True)
                         conn_lost.set()
                         break
 
@@ -265,8 +304,15 @@ class SapientEdgeClient:
                 await self.await_registration_ack()
             except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, RuntimeError) as exc:
                 LOG.warning("Connect failed: %s", exc)
+                self.net_stats.record_connect_failure()
             else:
                 delay = initial_delay
+                # A fresh connection means a fresh Registration, so any task the
+                # previous connection's Fusion Node had active is no longer known
+                # to it - don't carry it over.
+                self.current_mode = self.default_mode
+                self.active_task_id = None
+                self.active_task_regions = []
                 await self._run_connection()
             finally:
                 await self.close()
@@ -287,6 +333,7 @@ class SapientEdgeClient:
                 await self.writer.wait_closed()
             except Exception:
                 pass
+            self.net_stats.record_disconnect()
             LOG.info("Disconnected")
         self.reader = None
         self.writer = None

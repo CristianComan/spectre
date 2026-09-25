@@ -202,6 +202,47 @@ against the real local Fusion Node:
   reconnect loop thrashing every ~1-2s). Not a code bug, just an
   operational hazard to remember when testing.
 
+### Region tasking — done (ack-only, per the MVP scope table)
+
+`client._extract_regions` converts an accepted Task's `region` list to
+plain dicts via `MessageToDict` and stores them on
+`self.active_task_regions`, logging `Task <id> declares N region(s): ...`.
+Cleared on `STOP`/`PAUSE` and on reconnect. Still no detection filtering
+by region — that's out of scope until a real detector source (Phase 2)
+makes region gating meaningful.
+
+### Observability: mode-change history and network stats
+
+Ported from the sibling `interdictor` effector-node repo (same protocol,
+opposite role), which built these for the same reason: seeing what's
+being sent and how Tasking changes the node's behaviour, without a
+separate polling API or dashboard process.
+
+- **`mode_history.ModeHistory`** — every accepted `mode_change` and every
+  `STOP`/`PAUSE` reversion calls `client._record_mode_change`, which logs
+  a distinct `MODE CHANGE: <from> -> <to> (task_id=...)` line and appends
+  a capped (100-entry) `ModeTransition` list. The latest transition is
+  passed into `messages.build_status`, which adds it as a
+  `StatusReport.status[]` entry (`STATUS_TYPE_OTHER`) — visible on the
+  Fusion Node/C2 UI itself, not just local logs. Required a matching
+  `registration.json` declaration (`statusDefinition.statusReport[]`,
+  `category: STATUS_REPORT_CATEGORY_STATUS`, `type: "Mode Change"`) or the
+  Fusion Node silently strips the field — same quirk class as the
+  detection-field declarations. A mode-change Task now also triggers an
+  immediate out-of-cycle `StatusReport` (via the new `client.send_status`
+  helper, which both loops and `handle_task` call), so the behaviour
+  change is visible without waiting for the next `status.interval_s` tick.
+- **`netmon.NetworkStats`** — counts messages/bytes sent and received (per
+  message type), plus send/receive errors, connect attempts/failures, and
+  disconnects. Every `send()`/`receive_loop()`/`connect()`/`close()`/`run()`
+  call site updates it; `send_status()` logs `net_stats.summary()` once
+  per status interval. Counters persist for the whole process lifetime,
+  including across reconnects — meant to answer "how has this connection
+  behaved overall," not just "since the last reconnect."
+- Not ported: `interdictor`'s `TaskAck` builder still doesn't set
+  `destination_id` at all — likely the same bug this project just fixed,
+  worth checking there separately (out of scope for this repo).
+
 ## Phase 2 — Real RF detection input (replace the EW simulator)
 
 Status: the `Detection`/`build_ew_detection` split described below already

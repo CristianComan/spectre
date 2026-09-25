@@ -50,12 +50,23 @@ def test_mode_change_accepted_updates_mode_and_active_task():
 
     asyncio.run(client.handle_task(_mode_change_task("MONITOR", "task-1"), FUSION_NODE_ID))
 
-    assert len(sent) == 1
-    ack = sent[0].task_ack
+    assert len(sent) == 2
+    ack_msg, status_msg = sent
+    ack = ack_msg.task_ack
     assert ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
-    assert sent[0].destination_id == FUSION_NODE_ID
+    assert ack_msg.destination_id == FUSION_NODE_ID
     assert client.current_mode == "MONITOR"
     assert client.active_task_id == "task-1"
+
+    # An immediate out-of-cycle StatusReport follows the accepted mode change,
+    # surfacing the mode-history transition so it's visible on the Fusion
+    # Node / C2 side, not just in local logs.
+    assert status_msg.WhichOneof("content") == "status_report"
+    assert len(status_msg.status_report.status) == 1
+    assert "MONITOR" in status_msg.status_report.status[0].status_value
+    assert client.mode_history.last is not None
+    assert client.mode_history.last.to_mode == "MONITOR"
+    assert client.mode_history.last.task_id == "task-1"
 
 
 def test_mode_change_rejected_for_unregistered_mode():
@@ -99,10 +110,12 @@ def test_stop_clears_active_task_and_reverts_mode():
 
     asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "task-1"), FUSION_NODE_ID))
 
-    ack = sent[-1].task_ack
-    assert ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
+    # sent so far: [mode-change ack, mode-change status, stop ack, stop status]
+    stop_ack_msg = sent[2]
+    assert stop_ack_msg.task_ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
     assert client.active_task_id is None
     assert client.current_mode == client.default_mode
+    assert client.active_task_regions == []
 
 
 def test_stop_on_unknown_task_is_rejected():
@@ -127,6 +140,25 @@ def test_request_status_acks_then_sends_immediate_status_report():
     assert ack_msg.task_ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
     assert status_msg.WhichOneof("content") == "status_report"
     assert status_msg.status_report.mode == client.current_mode
+
+
+def test_mode_change_with_region_stores_it_ack_only():
+    client, sent = _make_client()
+    task = _mode_change_task("MONITOR", "task-1")
+    region = task.region.add()
+    region.type = Task.REGION_TYPE_AREA_OF_INTEREST
+    region.region_id = "01M3C8V59DKSPYQTQJVF1DDS33"
+    region.region_name = "North Sector"
+
+    asyncio.run(client.handle_task(task, FUSION_NODE_ID))
+
+    ack = sent[0].task_ack
+    assert ack.task_status == TaskAck.TASK_STATUS_ACCEPTED
+    assert len(client.active_task_regions) == 1
+    assert client.active_task_regions[0]["region_name"] == "North Sector"
+
+    asyncio.run(client.handle_task(_task(Task.CONTROL_STOP, "task-1"), FUSION_NODE_ID))
+    assert client.active_task_regions == []
 
 
 def test_request_registration_acks_then_resends_registration():

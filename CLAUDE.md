@@ -209,13 +209,20 @@ framing, Registration -> RegistrationAck handshake, periodic StatusReport,
 periodic multi-emitter EW/RF `DetectionReport`s via `ew.EWDetectionSource`
 (amplitude/frequency band/classification per emitter, with emitters
 independently rolling on/off and persistent per-track `object_id`), YAML
-config, TX/RX logging. Verified end-to-end (clean, warning-free) against a
-real Fusion Node (see quirks above).
+config, TX/RX logging. Phase 1 Tasking is also implemented: receiving
+`Task`, dispatching `mode_change`/`request(status|registration)`/
+`START`/`STOP`/`PAUSE` (see `client.handle_task` and PLAN.md's "Phase 1 —
+Tasking" section for the full design and live-verification notes),
+region tasking (accept-and-store, no filtering yet), and observability
+(`mode_history.ModeHistory` + `netmon.NetworkStats`, ported from the
+sibling `interdictor` repo). Verified end-to-end (clean, warning-free)
+against a real Fusion Node (see quirks above), including a real
+Fusion-Node-issued Task -> TaskAck round-trip.
 
-Not yet implemented (see [PLAN.md](PLAN.md) for sequencing): Tasking
-(receiving `Task`, sending `TaskAck`, mode changes), Pluto SDR input,
-SigMF, SAPIENT-X extensions, real RF detection processing (the EW emitters
-are still simulated, not derived from actual RF hardware).
+Not yet implemented (see [PLAN.md](PLAN.md) for sequencing): region
+filtering of detections, Pluto SDR input, SigMF, SAPIENT-X extensions,
+real RF detection processing (the EW emitters are still simulated, not
+derived from actual RF hardware).
 
 ## Git
 

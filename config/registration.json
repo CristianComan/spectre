@@ -25,7 +25,14 @@
     "locationDefinition": {
       "locationUnits": "LOCATION_COORDINATE_SYSTEM_LAT_LNG_DEG_M",
       "locationDatum": "LOCATION_DATUM_WGS84_E"
-    }
+    },
+    "statusReport": [
+      {
+        "category": "STATUS_REPORT_CATEGORY_STATUS",
+        "type": "Mode Change",
+        "units": "text"
+      }
+    ]
   },
   "modeDefinition": [
     {
