@@ -78,14 +78,20 @@ individually advertised or it's silently accepted-but-ignored"), any
 
 ```json
 "command": [
-  { "type": "COMMAND_TYPE_REQUEST", "units": "n/a", "completionTime": {"duration": 1, "timeUnits": "TIME_UNITS_SECOND"} },
-  { "type": "COMMAND_TYPE_MODE_CHANGE", "units": "mode name", "completionTime": {"duration": 5, "timeUnits": "TIME_UNITS_SECOND"} }
+  { "type": "COMMAND_TYPE_REQUEST", "units": "status|registration", "completionTime": {"units": "TIME_UNITS_SECONDS", "value": 1.0} },
+  { "type": "COMMAND_TYPE_MODE_CHANGE", "units": "MONITOR", "completionTime": {"units": "TIME_UNITS_SECONDS", "value": 5.0} }
 ]
 ```
 
-(exact field casing/units TBD against the real Fusion Node the same way
-the detection-field quirks were reverse-engineered — verify with a live
-`CI-map-viewer` round-trip, don't assume this json survives unchanged.)
+**Verified live against `CI-map-viewer`**: an earlier draft used a
+descriptive placeholder (`"units": "registered mode name"`) for the
+`COMMAND_TYPE_MODE_CHANGE` entry's `units` field. The live Fusion Node
+rejected the whole Registration for it with `error: invalid value:
+registration.mode_definition MONITOR MODE_CHANGE expected a registered
+mode, found registered mode name` — i.e. `units` on a `MODE_CHANGE`
+command entry isn't free text, it must literally be (a) registered mode
+name(s) this command can switch into. Fixed to `"MONITOR"` (the only mode
+currently registered); revisit once a second mode exists.
 
 ### MVP scope (map IG §9's task types onto what spectre can actually do)
 
@@ -157,6 +163,38 @@ matching this IG can parse them reliably.
    TaskAck `REJECTED` / `unsupported command`; `CONTROL_STOP` on the active
    task -> TaskAck `ACCEPTED` and `active_task_id` cleared on the next
    `StatusReport`.
+
+### Verification status (live `CI-map-viewer` round-trip)
+
+Implemented in `client.py`/`messages.py`/`registration.json` and unit
+tested in `tests/test_tasking.py` (8 cases, all passing). Also exercised
+against the real local Fusion Node:
+
+- Registration with the new `command` declarations is accepted cleanly
+  (after the `units` fix above) — no `warning: ... field ignored` on the
+  Task path.
+- Two real `Task` messages sent from the Fusion Node's UI were received,
+  dispatched, and answered with a `TaskAck` (`control=1` /
+  `CONTROL_START` in both cases) — confirms the `receive_loop` ->
+  `handle_task` -> `TaskAck` path works end-to-end, not just in the unit
+  tests.
+- **Open item**: the `request: "registration"` path (re-sending a full
+  `Registration` mid-connection) was observed to provoke an `Error` from
+  the Fusion Node immediately afterward, though a `RegistrationAck`
+  eventually followed too. The exact `error_message` text wasn't captured
+  before the test session ended (a node_id collision from a second,
+  independently-started `spectre` process confused the log at the time).
+  Re-verify with `logging.level: DEBUG` and a single running instance,
+  capture the `Error.error_message` list, and decide whether spectre
+  should still blindly resend `Registration` mid-session or whether the
+  Fusion Node expects a fresh connection for that case. Mode-change and
+  status-request task handling were not affected by this.
+- Confirmed operationally: only run **one** `spectre` process per
+  `node_id` at a time — the Fusion Node has no fencing for a duplicate
+  connection, so two processes with the same `node_id` repeatedly kick
+  each other's connection (`0 bytes read on a total of 4 expected bytes`,
+  reconnect loop thrashing every ~1-2s). Not a code bug, just an
+  operational hazard to remember when testing.
 
 ## Phase 2 — Real RF detection input (replace the EW simulator)
 

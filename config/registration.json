@@ -59,7 +59,7 @@
           },
           {
             "type": "COMMAND_TYPE_MODE_CHANGE",
-            "units": "registered mode name",
+            "units": "MONITOR",
             "completionTime": { "units": "TIME_UNITS_SECONDS", "value": 5.0 }
           }
         ]
